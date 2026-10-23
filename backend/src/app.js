@@ -1,11 +1,10 @@
-
 const express = require("express");
 const cors = require("cors");
 const helmet = require("helmet");
 
 const authRoutes = require("./routes/authRoutes");
-
 const lessonRoutes = require("./routes/lessonRoutes");
+const courseRoutes = require("./routes/courseRoutes");
 
 const app = express();
 
@@ -47,6 +46,7 @@ app.get("/api/health", (req, res) => {
 
 app.use("/api/auth", authRoutes);
 app.use("/api/lessons", lessonRoutes);
+app.use("/api/courses", courseRoutes);
 
 app.use((req, res) => {
   res.status(404).json({

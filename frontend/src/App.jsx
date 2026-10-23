@@ -8,6 +8,9 @@ import Home from "./pages/Home";
 import Login from "./pages/Login";
 import Register from "./pages/Register";
 import Dashboard from "./pages/Dashboard";
+import Courses from "./pages/Courses";
+import CourseDetails from "./pages/CourseDetails";
+import LessonDetails from "./pages/LessonDetails";
 
 function Navbar() {
   const { isAuthenticated, user } = useAuth();
@@ -28,6 +31,9 @@ function Navbar() {
               <Link to="/dashboard" className="hover:text-lime-400">
                 Dashboard
               </Link>
+              <Link to="/courses" className="hover:text-lime-400">
+  Courses
+</Link>
             </>
           ) : (
             <>
@@ -81,6 +87,33 @@ export default function App() {
           element={
             <ProtectedRoute>
               <Dashboard />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/courses"
+          element={
+            <ProtectedRoute>
+              <Courses />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/courses/:slug"
+          element={
+            <ProtectedRoute>
+              <CourseDetails />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/lessons/:lessonId"
+          element={
+            <ProtectedRoute>
+              <LessonDetails />
             </ProtectedRoute>
           }
         />
