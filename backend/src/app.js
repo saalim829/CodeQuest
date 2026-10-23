@@ -5,6 +5,8 @@ const helmet = require("helmet");
 
 const authRoutes = require("./routes/authRoutes");
 
+const lessonRoutes = require("./routes/lessonRoutes");
+
 const app = express();
 
 app.disable("x-powered-by");
@@ -44,12 +46,14 @@ app.get("/api/health", (req, res) => {
 });
 
 app.use("/api/auth", authRoutes);
+app.use("/api/lessons", lessonRoutes);
 
 app.use((req, res) => {
   res.status(404).json({
     message: "Route not found",
   });
 });
+
 
 app.use((error, req, res, next) => {
   if (res.headersSent) {
