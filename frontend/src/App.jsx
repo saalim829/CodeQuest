@@ -11,6 +11,7 @@ import Dashboard from "./pages/Dashboard";
 import Courses from "./pages/Courses";
 import CourseDetails from "./pages/CourseDetails";
 import LessonDetails from "./pages/LessonDetails";
+import QuizDetails from "./pages/QuizDetails";
 
 function Navbar() {
   const { isAuthenticated, user } = useAuth();
@@ -109,6 +110,8 @@ export default function App() {
           }
         />
 
+        
+
         <Route
           path="/lessons/:lessonId"
           element={
@@ -117,6 +120,8 @@ export default function App() {
             </ProtectedRoute>
           }
         />
+
+        <Route path="/quizzes/:quizId" element={<QuizDetails />} />
 
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

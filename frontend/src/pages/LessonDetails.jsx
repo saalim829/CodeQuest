@@ -11,6 +11,7 @@ export default function LessonDetails() {
   const { token, updateUser } = useAuth();
 
   const [lesson, setLesson] = useState(null);
+  const [quizzes, setQuizzes] = useState([]);
   const [completed, setCompleted] = useState(false);
   const [loading, setLoading] = useState(true);
   const [completing, setCompleting] = useState(false);
@@ -22,21 +23,36 @@ export default function LessonDetails() {
     setError("");
 
     try {
-      // Find the lesson in the published lessons API.
-      const response = await fetch(`${API_BASE_URL}/lessons`, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-        signal,
-      });
+      const [lessonResponse, quizResponse] = await Promise.all([
+        fetch(`${API_BASE_URL}/lessons`, {
+          headers: { Authorization: `Bearer ${token}` },
+          signal,
+        }),
+        fetch(`${API_BASE_URL}/quizzes/lesson/${lessonId}`, {
+          headers: { Authorization: `Bearer ${token}` },
+          signal,
+        }),
+      ]);
 
-      const data = await response.json().catch(() => ({}));
+      const lessonData = await lessonResponse.json().catch(() => ({}));
+      const quizData = await quizResponse.json().catch(() => ({}));
 
-      if (!response.ok) {
-        throw new Error(data.message || "Failed to load lesson.");
+      if (!lessonResponse.ok) {
+        throw new Error(
+          lessonData.message || "Failed to load lesson."
+        );
       }
 
-      const lessons = Array.isArray(data.lessons) ? data.lessons : [];
+      if (!quizResponse.ok) {
+        throw new Error(
+          quizData.message || "Failed to load lesson quizzes."
+        );
+      }
+
+      const lessons = Array.isArray(lessonData.lessons)
+        ? lessonData.lessons
+        : [];
+
       const found = lessons.find(
         (item) => String(item._id) === String(lessonId)
       );
@@ -47,6 +63,9 @@ export default function LessonDetails() {
 
       setLesson(found);
       setCompleted(Boolean(found.completed));
+      setQuizzes(
+        Array.isArray(quizData.quizzes) ? quizData.quizzes : []
+      );
     } catch (err) {
       if (err.name !== "AbortError") {
         setError(err.message || "Unable to load lesson.");
@@ -86,7 +105,9 @@ export default function LessonDetails() {
       const data = await response.json().catch(() => ({}));
 
       if (!response.ok) {
-        throw new Error(data.message || "Could not complete lesson.");
+        throw new Error(
+          data.message || "Could not complete lesson."
+        );
       }
 
       setCompleted(true);
@@ -98,7 +119,9 @@ export default function LessonDetails() {
       setNotice(
         data.alreadyCompleted
           ? "You have already completed this lesson. No extra XP was awarded."
-          : `Lesson completed! You earned ${data.xpAwarded ?? lesson.xpReward ?? 0} XP.`
+          : `Lesson completed! You earned ${
+              data.xpAwarded ?? lesson.xpReward ?? 0
+            } XP.`
       );
     } catch (err) {
       setError(err.message || "Could not complete lesson.");
@@ -118,8 +141,13 @@ export default function LessonDetails() {
   if (error && !lesson) {
     return (
       <main className="mx-auto max-w-4xl px-6 py-12">
-        <p role="alert" className="text-red-400">{error}</p>
-        <Link to="/courses" className="mt-4 inline-block text-lime-400">
+        <p role="alert" className="text-red-400">
+          {error}
+        </p>
+        <Link
+          to="/courses"
+          className="mt-4 inline-block text-lime-400"
+        >
           Back to courses
         </Link>
       </main>
@@ -156,7 +184,8 @@ export default function LessonDetails() {
           </span>
 
           <span className="text-sm text-zinc-400">
-            {lesson.estimatedMinutes ?? 10} minutes · {lesson.xpReward ?? 0} XP
+            {lesson.estimatedMinutes ?? 10} minutes ·{" "}
+            {lesson.xpReward ?? 0} XP
           </span>
         </div>
 
@@ -165,7 +194,9 @@ export default function LessonDetails() {
         </h1>
 
         {lesson.description && (
-          <p className="mt-4 text-zinc-400">{lesson.description}</p>
+          <p className="mt-4 text-zinc-400">
+            {lesson.description}
+          </p>
         )}
 
         <div className="mt-8 whitespace-pre-wrap leading-8 text-zinc-200">
@@ -182,10 +213,12 @@ export default function LessonDetails() {
         )}
 
         {error && (
-          <p role="alert" className="mt-6 text-red-400">{error}</p>
+          <p role="alert" className="mt-6 text-red-400">
+            {error}
+          </p>
         )}
 
-        <div className="mt-10 border-t border-zinc-800 pt-6">
+        <div className="mt-10 flex flex-wrap gap-3 border-t border-zinc-800 pt-6">
           <button
             onClick={handleComplete}
             disabled={completed || completing}
@@ -201,7 +234,37 @@ export default function LessonDetails() {
                 ? "Completing..."
                 : `Complete Lesson · Earn ${lesson.xpReward ?? 0} XP`}
           </button>
+
+          {quizzes.length > 0 && (
+            <Link
+              to={`/quizzes/${quizzes[0].id}`}
+              className="inline-flex w-full items-center justify-center rounded-xl border border-indigo-400 px-5 py-3 font-semibold text-indigo-300 hover:bg-indigo-950 sm:w-auto"
+            >
+              Take Quiz →
+            </Link>
+          )}
         </div>
+
+        {quizzes.length > 1 && (
+          <section className="mt-8 border-t border-zinc-800 pt-6">
+            <h2 className="text-lg font-semibold text-white">
+              More quizzes
+            </h2>
+
+            <ul className="mt-3 space-y-3">
+              {quizzes.slice(1).map((quiz) => (
+                <li key={quiz.id}>
+                  <Link
+                    to={`/quizzes/${quiz.id}`}
+                    className="text-indigo-300 hover:underline"
+                  >
+                    {quiz.title} →
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
       </article>
     </main>
   );
