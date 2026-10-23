@@ -35,7 +35,19 @@ export default function Dashboard() {
         throw new Error(data.message || "Failed to load lessons");
       }
 
-      setLessons(Array.isArray(data.lessons) ? data.lessons : []);
+      const fetchedLessons = Array.isArray(data.lessons)
+  ? data.lessons
+  : [];
+
+setLessons(fetchedLessons);
+
+setCompletedLessons(
+  new Set(
+    fetchedLessons
+      .filter((lesson) => lesson.completed)
+      .map((lesson) => lesson._id)
+  )
+);
     } catch (error) {
       if (error.name !== "AbortError") {
         setLoadError(error.message || "Unable to load lessons.");

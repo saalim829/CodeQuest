@@ -3,15 +3,18 @@ const mongoose = require("mongoose");
 const User = require("../models/User");
 const Lesson = require("../models/Lesson");
 const UserProgress = require("../models/UserProgress");
+const Course = require("../models/Course");
 
 const GAMIFICATION_URL =
-  process.env.GAMIFICATION_SERVICE_URL ||
-  "http://127.0.0.1:8081";
+  process.env.GAMIFICATION_SERVICE_URL || "http://127.0.0.1:8081";
 
+/**
+ * Request an XP and streak calculation from the Go service.
+ */
 async function requestGamification(payload) {
-  const token = process.env.GAMIFICATION_SERVICE_TOKEN;
+  const serviceToken = process.env.GAMIFICATION_SERVICE_TOKEN;
 
-  if (!token) {
+  if (!serviceToken) {
     throw new Error("Gamification service token is not configured");
   }
 
@@ -21,7 +24,7 @@ async function requestGamification(payload) {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "X-Service-Token": token,
+        "X-Service-Token": serviceToken,
       },
       body: JSON.stringify(payload),
       signal: AbortSignal.timeout(5000),
@@ -29,30 +32,95 @@ async function requestGamification(payload) {
   );
 
   if (!response.ok) {
-    throw new Error(
+    const error = new Error(
       `Gamification service returned HTTP ${response.status}`
     );
+    error.status = 502;
+    throw error;
   }
 
   const result = await response.json();
 
-  if (
-    !Number.isSafeInteger(result.xp) ||
-    !Number.isSafeInteger(result.level) ||
-    !Number.isSafeInteger(result.currentStreak) ||
-    !Number.isSafeInteger(result.longestStreak) ||
-    result.xp < 0 ||
-    result.level < 1 ||
-    result.currentStreak < 0 ||
-    result.longestStreak < result.currentStreak
-  ) {
-    throw new Error("Gamification service returned invalid data");
+  const requiredFields = [
+    "xp",
+    "level",
+    "currentStreak",
+    "longestStreak",
+  ];
+
+  for (const field of requiredFields) {
+    if (
+      !Number.isFinite(result[field]) ||
+      result[field] < 0
+    ) {
+      throw new Error(
+        `Invalid gamification response: ${field}`
+      );
+    }
   }
 
   return result;
 }
 
-exports.completeLesson = async (req, res, next) => {
+/**
+ * GET /api/lessons
+ * Return published lessons for authenticated users.
+ */
+
+async function getPublishedLessons(req, res, next) {
+  try {
+    if (!req.user || !req.user._id) {
+      return res.status(401).json({
+        message: "Authentication required",
+      });
+    }
+
+    const lessons = await Lesson.find({ isPublished: true })
+      .select(
+        "course title slug description content order estimatedMinutes xpReward"
+      )
+      .populate(
+        "course",
+        "title slug description category difficulty"
+      )
+      .sort({ course: 1, order: 1 })
+      .lean();
+
+    // Retrieve this user's completed lessons.
+    const completedProgress = await UserProgress.find({
+      user: req.user._id,
+      status: "completed",
+    })
+      .select("lesson")
+      .lean();
+
+    const completedLessonIds = new Set(
+      completedProgress.map((progress) =>
+        String(progress.lesson)
+      )
+    );
+
+    // Include completion status for each lesson.
+    const lessonsWithProgress = lessons.map((lesson) => ({
+      ...lesson,
+      completed: completedLessonIds.has(String(lesson._id)),
+    }));
+
+    return res.status(200).json({
+      lessons: lessonsWithProgress,
+    });
+  } catch (error) {
+    console.error("Get published lessons error:", error);
+    return next(error);
+  }
+}
+
+
+/**
+ * POST /api/lessons/:lessonId/complete
+ * Complete a published lesson and award XP once.
+ */
+async function completeLesson(req, res, next) {
   const { lessonId } = req.params;
 
   if (!mongoose.isValidObjectId(lessonId)) {
@@ -61,27 +129,34 @@ exports.completeLesson = async (req, res, next) => {
     });
   }
 
-  // The authenticated identity comes from JWT middleware,
-  // never from a user ID supplied in the request body.
-  const userId = req.user._id;
+  if (!req.user || !req.user._id) {
+    return res.status(401).json({
+      message: "Authentication required",
+    });
+  }
 
-  let session;
+  const session = await mongoose.startSession();
 
   try {
-    const lesson = await Lesson.findById(lessonId);
-
-    if (!lesson || !lesson.isPublished) {
-      return res.status(404).json({
-        message: "Published lesson not found",
-      });
-    }
-
-    session = await mongoose.startSession();
-
-    let result;
+    let outcome;
 
     await session.withTransaction(async () => {
-      const user = await User.findById(userId).session(session);
+      const lesson = await Lesson.findOne({
+        _id: lessonId,
+        isPublished: true,
+      }).session(session);
+
+      if (!lesson) {
+        const error = new Error(
+          "Published lesson not found"
+        );
+        error.status = 404;
+        throw error;
+      }
+
+      const user = await User.findById(req.user._id).session(
+        session
+      );
 
       if (!user) {
         const error = new Error("User not found");
@@ -89,110 +164,106 @@ exports.completeLesson = async (req, res, next) => {
         throw error;
       }
 
-      const progress = await UserProgress.findOne({
-        user: userId,
+      let progress = await UserProgress.findOne({
+        user: user._id,
         lesson: lesson._id,
       }).session(session);
 
-      if (progress?.status === "completed") {
-        result = {
+      // Do not award XP again for an already-completed lesson.
+      if (progress && progress.status === "completed") {
+        outcome = {
           alreadyCompleted: true,
-          user,
+          user: {
+            id: user._id.toString(),
+            xp: user.xp,
+            level: user.level,
+            currentStreak: user.currentStreak,
+            longestStreak: user.longestStreak,
+          },
         };
+
         return;
       }
 
-      const activityDate = new Date().toISOString().slice(0, 10);
+      const activityDate = new Date()
+        .toISOString()
+        .slice(0, 10);
 
-      const lastActivityDate = user.lastActivityDate
-        ? user.lastActivityDate.toISOString().slice(0, 10)
-        : "";
-
-      // Go calculates the reward. MongoDB remains the source of
-      // truth for the persisted user statistics.
-      const stats = await requestGamification({
+      const gamification = await requestGamification({
         currentXP: user.xp,
         currentStreak: user.currentStreak,
         longestStreak: user.longestStreak,
-        lastActivityDate,
+        lastActivityDate: user.lastActivityDate
+          ? new Date(user.lastActivityDate)
+              .toISOString()
+              .slice(0, 10)
+          : null,
         xpReward: lesson.xpReward,
         activityDate,
       });
 
-      user.xp = stats.xp;
-      user.level = stats.level;
-      user.currentStreak = stats.currentStreak;
-      user.longestStreak = stats.longestStreak;
-      user.lastActivityDate = new Date(
-        `${stats.lastActivityDate}T00:00:00.000Z`
-      );
+      user.xp = gamification.xp;
+      user.level = gamification.level;
+      user.currentStreak = gamification.currentStreak;
+      user.longestStreak = gamification.longestStreak;
+
+      if (gamification.lastActivityDate !== undefined) {
+        user.lastActivityDate =
+          gamification.lastActivityDate;
+      } else {
+        user.lastActivityDate = new Date(activityDate);
+      }
 
       await user.save({ session });
 
-      if (progress) {
-        progress.status = "completed";
-        progress.completedAt = new Date();
-        progress.lastAccessedAt = new Date();
+      const now = new Date();
 
-        if (!progress.startedAt) {
-          progress.startedAt = new Date();
-        }
-
-        await progress.save({ session });
+      if (!progress) {
+        progress = new UserProgress({
+          user: user._id,
+          course: lesson.course,
+          lesson: lesson._id,
+          status: "completed",
+          startedAt: now,
+          completedAt: now,
+          lastAccessedAt: now,
+          attempts: 1,
+        });
       } else {
-        await UserProgress.create(
-          [
-            {
-              user: userId,
-              course: lesson.course,
-              lesson: lesson._id,
-              status: "completed",
-              startedAt: new Date(),
-              completedAt: new Date(),
-              lastAccessedAt: new Date(),
-              attempts: 1,
-            },
-          ],
-          { session }
-        );
+        progress.status = "completed";
+        progress.completedAt = now;
+        progress.lastAccessedAt = now;
+        progress.attempts = (progress.attempts || 0) + 1;
       }
 
-      result = {
+      await progress.save({ session });
+
+      outcome = {
         alreadyCompleted: false,
-        user,
+        xpAwarded: lesson.xpReward,
+        user: {
+          id: user._id.toString(),
+          xp: user.xp,
+          level: user.level,
+          currentStreak: user.currentStreak,
+          longestStreak: user.longestStreak,
+        },
       };
     });
 
-    if (result.alreadyCompleted) {
-      return res.status(200).json({
-        message: "Lesson already completed",
-        alreadyCompleted: true,
-        user: {
-          id: result.user._id,
-          xp: result.user.xp,
-          level: result.user.level,
-          currentStreak: result.user.currentStreak,
-          longestStreak: result.user.longestStreak,
-        },
-      });
-    }
-
     return res.status(200).json({
       message: "Lesson completed successfully",
-      alreadyCompleted: false,
-      user: {
-        id: result.user._id,
-        xp: result.user.xp,
-        level: result.user.level,
-        currentStreak: result.user.currentStreak,
-        longestStreak: result.user.longestStreak,
-      },
+      ...outcome,
     });
   } catch (error) {
-    next(error);
+    console.error("Complete lesson error:", error);
+    return next(error);
   } finally {
-    if (session) {
-      await session.endSession();
-    }
+    await session.endSession();
   }
+}
+
+module.exports = {
+  getPublishedLessons,
+  completeLesson,
 };
