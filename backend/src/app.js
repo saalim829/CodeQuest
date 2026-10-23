@@ -5,6 +5,7 @@ const helmet = require("helmet");
 const authRoutes = require("./routes/authRoutes");
 const lessonRoutes = require("./routes/lessonRoutes");
 const courseRoutes = require("./routes/courseRoutes");
+const quizRoutes = require("./routes/quizRoutes");
 
 const app = express();
 
@@ -47,6 +48,7 @@ app.get("/api/health", (req, res) => {
 app.use("/api/auth", authRoutes);
 app.use("/api/lessons", lessonRoutes);
 app.use("/api/courses", courseRoutes);
+app.use("/api/quizzes", quizRoutes);
 
 app.use((req, res) => {
   res.status(404).json({
