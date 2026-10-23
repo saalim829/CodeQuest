@@ -56,6 +56,13 @@ export function AuthProvider({ children }) {
     return data.user;
   }, []);
 
+  // Merge updated stats without removing username or other user fields.
+  const updateUser = useCallback((updates) => {
+    setUser((currentUser) =>
+      currentUser ? { ...currentUser, ...updates } : currentUser
+    );
+  }, []);
+
   const logout = useCallback(() => {
     setUser(null);
     setToken(null);
@@ -68,9 +75,10 @@ export function AuthProvider({ children }) {
       isAuthenticated: Boolean(user && token),
       login,
       register,
+      updateUser,
       logout,
     }),
-    [user, token, login, register, logout]
+    [user, token, login, register, updateUser, logout]
   );
 
   return (
